@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'Edit post' if post else 'Create post' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">SHARE WITH CARE</p><h1>{{ 'Edit your post' if post else 'Create a post' }}</h1><p>Personal experience is welcome. Avoid medical advice, dosing, and guaranteed outcomes.</p></div></div>
+<div class="form-card">
+  <form method="post" enctype="multipart/form-data" id="post-form" novalidate>
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <div class="field"><label for="type">Post type</label><select id="type" name="type" aria-describedby="type-error" {% if errors.get('type') %}aria-invalid="true"{% endif %}>
+      <option value="story" {{ 'selected' if form_values.type=='story' else '' }}>Story</option>
+      <option value="question" {{ 'selected' if form_values.type=='question' else '' }}>Question</option>
+      <option value="progress" {{ 'selected' if form_values.type=='progress' else '' }}>Progress gallery</option>
+    </select><p class="field-error" id="type-error" data-field-error="type" role="alert">{{ errors.get('type','') }}</p></div>
+    <div class="field"><label for="title">Title</label>
+      <input id="title" name="title" maxlength="120" minlength="3" required value="{{ form_values.title }}" placeholder="Give your post a clear title" aria-describedby="title-hint title-error" {% if errors.get('title') %}aria-invalid="true"{% endif %}>
+      <small id="title-hint">3–120 characters</small><p class="field-error" id="title-error" data-field-error="title" role="alert">{{ errors.get('title','') }}</p>
+    </div>
+    <div class="field"><label for="body">Your post</label>
+      <textarea id="body" name="body" maxlength="10000" rows="9" required placeholder="Share your experience or ask a general question…" aria-describedby="body-hint word-count body-error" {% if errors.get('body') %}aria-invalid="true"{% endif %}>{{ form_values.body }}</textarea>
+      <small id="body-hint">Keep personal health information private. Maximum 1,000 words.</small>
+      <small id="word-count" aria-live="polite">0 / 1,000 words</small><p class="field-error" id="body-error" data-field-error="body" role="alert">{{ errors.get('body','') }}</p>
+    </div>
+    <fieldset class="tag-field" id="tags-field" aria-describedby="tags-error" {% if errors.get('tags') %}aria-invalid="true"{% endif %}><legend>Choose at least one topic</legend>
+      <div class="tag-choices">{% for tag in all_tags %}<label><input type="checkbox" name="tags" value="{{ tag['id'] }}" {{ 'checked' if tag['id'] in selected else '' }}><span>#{{ tag['name'] }}</span></label>{% endfor %}</div>
+      <p class="field-error" id="tags-error" data-field-error="tags" role="alert">{{ errors.get('tags','') }}</p>
+    </fieldset>
+    {% if not post %}
+    <div class="upload-box" id="upload-zone"><div class="upload-heading"><span class="upload-glyph" aria-hidden="true">▧</span><div><strong>Optional photos</strong><p>Build a before-and-after gallery, or add a single image.</p></div></div>
+      <div class="upload-drop"><span aria-hidden="true">＋</span><strong>Drop photos here</strong><span>or choose them from your device</span>
+        <input class="upload-input" id="images" type="file" name="images" accept="image/jpeg,image/png,image/webp" multiple aria-describedby="images-hint images-error">
+        <label class="btn secondary upload-browse" for="images">Choose photos</label>
+      </div>
+      <small id="images-hint">JPEG, PNG, or WebP · Up to 8 images, 10 MB each. Photos are converted to JPEG and metadata is removed.</small>
+      <p class="upload-status" id="upload-status" role="status" aria-live="polite">No photos selected</p>
+      <div id="image-fields" class="image-preview-grid"></div><p class="field-error" id="images-error" data-field-error="images" role="alert">{{ errors.get('images','') }}</p>
+      {% if file_reset %}<p class="hint" role="status">Your text and tags are saved here. Please reselect your photos before publishing.</p>{% endif %}
+    </div>
+    <div class="field"><label class="check consent"><input type="checkbox" name="photo_consent" value="yes" {{ 'checked' if consent_checked else '' }} aria-describedby="photo_consent-error"><span>If I upload photos, I confirm I own them or have permission, every identifiable person has consented, and I can request removal. Images do not establish a treatment result.</span></label>
+      <p class="field-error" id="photo_consent-error" data-field-error="photo_consent" role="alert">{{ errors.get('photo_consent','') }}</p></div>
+    {% else %}<p class="hint">Existing photos remain attached. To remove an image, contact a moderator; individual image editing awaits review.</p>{% endif %}
+    <div class="form-actions"><button class="btn primary" name="intent" value="publish">{{ 'Publish draft' if post and post['status']=='draft' else ('Save changes' if post else 'Publish post') }}</button>
+      {% if not post or post['status']=='draft' %}<button class="btn secondary" name="intent" value="draft">Save draft</button>{% endif %}
+      <button class="btn ghost" type="button" id="preview-post">Preview</button>
+      <a class="btn secondary" href="{{ url_for('drafts') if post and post['status']=='draft' else (url_for('post_detail',post_id=post['id']) if post else url_for('index')) }}">Cancel</a>
+    </div>
+  </form>
+</div>
+<dialog id="post-preview" aria-labelledby="preview-title"><p class="eyebrow">POST PREVIEW</p><h2 id="preview-title"></h2><p id="preview-body"></p><p class="hint">Images and final tag layout appear after publishing.</p><button type="button" class="btn secondary" id="close-preview">Close preview</button></dialog>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">YOUR ACCOUNT</p><h1>Profile settings</h1><p>Your password and private account data are never shown on public profiles.</p></div></div>
+<div class="form-card">
+  <h2>About you</h2>
+  <form method="post" action="{{ url_for('settings') }}" enctype="multipart/form-data" id="profile-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <div class="field">
+      <label for="bio">Bio</label>
+      <textarea id="bio" name="bio" maxlength="500" rows="4" aria-describedby="bio-hint{% if errors.get('bio') %} bio-error{% endif %}" {% if errors.get('bio') %}aria-invalid="true"{% endif %}>{{ profile_bio }}</textarea>
+      <p class="hint" id="bio-hint">Optional · maximum 500 characters. Avoid private medical details.</p>
+      {% if errors.get('bio') %}<p class="field-error" id="bio-error" role="alert">{{ errors['bio'] }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label for="avatar">Profile photo</label>
+      <div class="avatar-preview-row"><span class="avatar large" id="avatar-preview" aria-label="Current or selected profile photo">{% if current_user['avatar'] %}<img src="{{ url_for('media_file',media_id=current_user['avatar']) }}" alt="">{% else %}{{ current_user['username'][0]|upper }}{% endif %}</span><p class="hint">JPEG, PNG, or WebP · up to 10 MB. Leave empty to keep your current photo.</p></div>
+      <input id="avatar" type="file" name="avatar" accept="image/jpeg,image/png,image/webp" aria-describedby="avatar-hint{% if errors.get('avatar') %} avatar-error{% endif %}" {% if errors.get('avatar') %}aria-invalid="true"{% endif %}>
+      <p class="hint" id="avatar-hint">Your selected photo appears above before saving.</p>
+      {% if errors.get('avatar') %}<p class="field-error" id="avatar-error" role="alert">{{ errors['avatar'] }}</p>{% endif %}
+    </div>
+    <button class="btn primary" type="submit">Save</button>
+  </form>
+  <hr>
+  <p class="hint">For this local demo, account deletion and policy text require Louw review before public launch.</p>
+</div>
+<section class="form-card appearance-panel" id="appearance" aria-labelledby="appearance-title">
+  <p class="eyebrow">DISPLAY PREFERENCES</p>
+  <h2 id="appearance-title">Appearance</h2>
+  <p>Choose how the forum looks and reads. These settings follow your account on the laptop and phone.</p>
+  <form method="post" action="{{ url_for('save_appearance') }}" id="appearance-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <div class="appearance-grid">
+      <label>Colour mode<select name="theme"><option value="light" {{ 'selected' if appearance.theme=='light' else '' }}>Light</option><option value="dark" {{ 'selected' if appearance.theme=='dark' else '' }}>Dark</option></select></label>
+      <label>Font<select name="font"><option value="system" {{ 'selected' if appearance.font=='system' else '' }}>System</option><option value="readable" {{ 'selected' if appearance.font=='readable' else '' }}>Readable sans</option><option value="serif" {{ 'selected' if appearance.font=='serif' else '' }}>Serif</option></select></label>
+      <label>Text size<select name="text_size"><option value="small" {{ 'selected' if appearance.text_size=='small' else '' }}>Small</option><option value="normal" {{ 'selected' if appearance.text_size=='normal' else '' }}>Default</option><option value="large" {{ 'selected' if appearance.text_size=='large' else '' }}>Large</option><option value="extra" {{ 'selected' if appearance.text_size=='extra' else '' }}>Extra large</option></select></label>
+      <label>Spacing<select name="density"><option value="comfortable" {{ 'selected' if appearance.density=='comfortable' else '' }}>Comfortable</option><option value="compact" {{ 'selected' if appearance.density=='compact' else '' }}>Compact</option></select></label>
+      <label>Animation<select name="motion"><option value="system" {{ 'selected' if appearance.motion=='system' else '' }}>Follow device setting</option><option value="reduced" {{ 'selected' if appearance.motion=='reduced' else '' }}>Reduce animation</option></select></label>
+    </div>
+    <p class="hint" id="appearance-preview-note" aria-live="polite">Changes preview here immediately. Save to use them on your other devices.</p>
+    <button class="btn primary" type="submit">Save appearance</button>
+  </form>
+</section>
+<section class="form-card appearance-panel" id="password" aria-labelledby="password-title">
+  <p class="eyebrow">ACCOUNT SECURITY</p>
+  <h2 id="password-title">Change password</h2>
+  <p>Changing your password signs out your other devices. Use a unique password with at least 12 characters.</p>
+  <form method="post" action="{{ url_for('change_password') }}">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label>Current password<input type="password" name="current_password" autocomplete="current-password" required></label>
+    <label>New password<input type="password" name="new_password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+    <label>Confirm new password<input type="password" name="confirm_password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+    {% if password_error %}<p class="field-error" role="alert">{{ password_error }}</p>{% endif %}
+    <button class="btn secondary" type="submit">Update password</button>
+  </form>
+</section>
+{% endblock %}

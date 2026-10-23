@@ -1,0 +1,8 @@
+{% extends 'base.html' %}
+{% block title %}{{ view|capitalize }} · {{ profile['username'] }}{% endblock %}
+{% block content %}
+<a class="back-link" href="{{ url_for('profile',username=profile['username']) }}">← Back to {{ profile['username'] }}</a>
+<div class="page-head"><div><p class="eyebrow">COMMUNITY CONNECTIONS</p><h1>{{ profile['username'] }} · {{ view|capitalize }}</h1></div></div>
+<div class="member-list">{% for member in members %}<a class="member-row" href="{{ url_for('profile',username=member['username']) }}"><span class="avatar small">{% if member['avatar'] %}<img src="{{ url_for('media_file',media_id=member['avatar']) }}" alt="">{% else %}{{ member['username'][0]|upper }}{% endif %}</span><strong>{{ member['username'] }}</strong><span aria-hidden="true">→</span></a>{% else %}<div class="empty small-empty"><p>No members here yet.</p></div>{% endfor %}</div>
+{% if page>1 or more %}<nav class="pagination" aria-label="Connections pages">{% if page>1 %}<a class="btn secondary" href="{{ url_for('member_connections',username=profile['username'],view=view,page=page-1) }}">← Previous</a>{% endif %}<span>Page {{ page }}</span>{% if more %}<a class="btn secondary" href="{{ url_for('member_connections',username=profile['username'],view=view,page=page+1) }}">Next →</a>{% endif %}</nav>{% endif %}
+{% endblock %}

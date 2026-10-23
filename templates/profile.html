@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block title %}{{ profile['username'] }}{% endblock %}
+{% block content %}
+<div class="profile-head">
+  <div class="avatar large">{% if profile['avatar'] %}<img src="{{ url_for('media_file',media_id=profile['avatar']) }}" alt="Profile photo of {{ profile['username'] }}">{% else %}{{ profile['username'][0]|upper }}{% endif %}</div>
+  <div class="profile-intro"><p class="eyebrow">COMMUNITY MEMBER</p><h1>{{ profile['username'] }}</h1><p>Joined {{ profile['created_at'][:10] }}</p>
+    <div class="profile-stats"><a href="{{ url_for('member_connections',username=profile['username'],view='followers') }}"><strong>{{ followers }}</strong> followers</a><a href="{{ url_for('member_connections',username=profile['username'],view='following') }}"><strong>{{ following_count }}</strong> following</a></div>
+  </div>
+  {% if current_user and current_user['id']==profile['id'] %}<a class="btn secondary" href="{{ url_for('settings') }}">Edit profile</a>
+  {% elif current_user %}<form class="member-follow-form" method="post" action="{{ url_for('follow_member',username=profile['username']) }}"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="btn {{ 'secondary' if is_following else 'primary' }}" aria-pressed="{{ 'true' if is_following else 'false' }}">{{ 'Following ✓' if is_following else 'Follow member' }}</button><span class="sr action-feedback" aria-live="polite"></span></form>{% endif %}
+</div>
+<div class="profile-bio">{{ profile['bio'] or 'No bio added yet.' }}</div>
+{% if current_user and current_user['id']==profile['id'] %}
+<section class="mobile-account-actions" aria-label="Account actions"><h2>Your space</h2><p>Pick up where you left off.</p><div class="mobile-account-links"><a href="{{ url_for('saved_posts') }}">Saved posts</a><a href="{{ url_for('drafts') }}">Drafts</a><a href="{{ url_for('notifications') }}">Notifications</a><a href="{{ url_for('settings') }}">Settings</a>{% if current_user['role'] in ('moderator','admin') %}<a href="{{ url_for('moderation') }}">Moderation</a>{% endif %}</div><div class="account-forms"><form method="post" action="{{ url_for('replay_tutorial') }}"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="btn secondary" type="submit">View tutorial</button></form><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="btn secondary" type="submit">Sign out</button></form></div></section>
+{% endif %}
+<div class="section-heading"><div><p class="eyebrow">ACTIVITY</p><h2>Public posts</h2></div><span class="section-note">Newest first</span></div>
+<div class="feed-list">{% for post in posts %}{% include '_post_card.html' %}{% else %}<div class="empty small-empty"><p>No public posts yet.</p></div>{% endfor %}</div>
+{% if page>1 or more %}<nav class="pagination" aria-label="Profile posts pages">{% if page>1 %}<a class="btn secondary" href="{{ url_for('profile',username=profile['username'],page=page-1) }}">← Previous</a>{% endif %}<span>Page {{ page }}</span>{% if more %}<a class="btn secondary" href="{{ url_for('profile',username=profile['username'],page=page+1) }}">Next →</a>{% endif %}</nav>{% endif %}
+{% endblock %}

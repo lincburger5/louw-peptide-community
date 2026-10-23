@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block title %}Topics{% endblock %}
+{% block content %}
+<header class="topics-intro">
+  <p class="eyebrow">EXPLORE</p>
+  <h1>Find your conversation</h1>
+  <p>Pick a space to read, ask, or share.</p>
+</header>
+<div class="topics-search-wrap">
+  <label class="sr" for="topic-search">Search topics</label>
+  <span aria-hidden="true">⌕</span>
+  <input class="topic-search" id="topic-search" type="search" placeholder="Search topics" autocomplete="off">
+</div>
+<p class="topic-search-empty" id="topic-search-empty" role="status" hidden>No matching topics. Try another name.</p>
+<section class="topic-section" id="community-topics" data-topic-group aria-labelledby="community-title">
+  <div class="topics-heading"><div><p class="eyebrow">START HERE</p><h2 id="community-title">Community spaces</h2></div><span>{{ general|length }} topics</span></div>
+  <div class="community-grid">
+    {% for tag in general %}
+    {% set icon = {'stories':'✦','questions':'?','progress':'↗','wellness':'◌','peptide-questions':'⌁','research-safety':'⌕'}.get(tag['slug'],'#') %}
+    <a class="community-tile" data-topic-card data-search="{{ tag['name'] }} {{ tag['description'] }}" href="{{ url_for('topic',slug=tag['slug']) }}">
+      <span class="community-icon" aria-hidden="true">{{ icon }}</span>
+      <span class="community-copy"><strong>{{ tag['name'] }}</strong><small>{{ tag['post_count'] }} {{ 'post' if tag['post_count']==1 else 'posts' }}</small></span>
+      <span class="community-chevron" aria-hidden="true">›</span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+<section class="named-topics" aria-labelledby="named-title">
+  <div class="topics-heading named-topic-head"><div><p class="eyebrow">EXPLORE BY NAME</p><h2 id="named-title">Peptide discussions</h2></div><span>{{ groups|sum(attribute='tags', start=[])|length }} names</span></div>
+  <p class="topics-caveat">Names come from a proposed list. A topic does not confirm a Louw product or medical benefit.</p>
+  {% for group in groups if group.tags %}
+  <details class="topic-letter-section" id="topics-{{ group.slug }}" data-topic-group {% if loop.first %}open{% endif %}>
+    <summary><span class="letter-mark" aria-hidden="true">{{ group.label[0] }}</span><span>{{ group.label }}</span><small>{{ group.tags|length }}</small><span class="letter-chevron" aria-hidden="true">⌄</span></summary>
+    <div class="topic-name-list">
+      {% for tag in group.tags %}
+      <a class="topic-name-row" data-topic-card data-search="{{ tag['name'] }}" href="{{ url_for('topic',slug=tag['slug']) }}"><span>{{ tag['name'] }}</span><small>{{ tag['post_count'] }}</small><span aria-hidden="true">›</span><span class="sr">posts</span></a>
+      {% endfor %}
+    </div>
+  </details>
+  {% endfor %}
+</section>
+{% endblock %}
