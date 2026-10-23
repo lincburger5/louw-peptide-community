@@ -3,12 +3,14 @@ import os
 import re
 import secrets
 import sqlite3
+import psycopg
 import sys
 import time
 import unicodedata
 from datetime import timedelta
 from functools import wraps
 from pathlib import Path
+from dotenv import load_dotenv
 from urllib.parse import urlsplit
 
 from flask import (Flask, abort, flash, g, jsonify, redirect, render_template,
@@ -17,9 +19,10 @@ from PIL import Image, UnidentifiedImageError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.exceptions import SecurityError
 
-from db import backup_data, check_db, connect, init_db, seed_demo
+from db import backup_data, check_db, connect_app, init_db, seed_demo
 
 ROOT = Path(__file__).resolve().parent
+load_dotenv(ROOT/'.env')
 APP_VERSION = '1.2.0-local'
 MAX_UPLOAD = 10 * 1024 * 1024
 ALLOWED_REASONS = {'Spam','Harassment','Privacy or consent','Medical advice or dosing','Misleading claim','Other'}
@@ -57,6 +60,7 @@ def create_app(test_config=None):
     app.config.update(
         SECRET_KEY=(test_config or {}).get('SECRET_KEY') or os.environ.get('SECRET_KEY') or local_secret(),
         DATABASE_PATH=os.environ.get('DATABASE_PATH') or str(ROOT/'instance'/'forum.sqlite3'),
+        DATABASE_URL=os.environ.get('DATABASE_URL',''),
         UPLOAD_DIR=os.environ.get('UPLOAD_DIR') or str(ROOT/'instance'/'uploads'),
         MAX_CONTENT_LENGTH=35*1024*1024,
         SESSION_COOKIE_NAME='louw_live_session',
@@ -67,11 +71,13 @@ def create_app(test_config=None):
         BLOCKED_SLURS=DEFAULT_BLOCKED_SLURS,
     )
     if test_config: app.config.update(test_config)
+    if test_config and 'DATABASE_PATH' in test_config and 'DATABASE_URL' not in test_config:
+        app.config['DATABASE_URL']=''
     Path(app.config['UPLOAD_DIR']).mkdir(parents=True, exist_ok=True)
-    init_db(app.config['DATABASE_PATH'])
+    if not app.config['DATABASE_URL']: init_db(app.config['DATABASE_PATH'])
 
     def db():
-        if 'db' not in g: g.db=connect(app.config['DATABASE_PATH'])
+        if 'db' not in g: g.db=connect_app(app.config['DATABASE_PATH'],app.config['DATABASE_URL'])
         return g.db
 
     @app.teardown_appcontext
@@ -146,7 +152,8 @@ def create_app(test_config=None):
     def limited(key, count=12, window=60):
         now=int(time.time())
         with db() as conn:
-            conn.execute('BEGIN IMMEDIATE')
+            if app.config['DATABASE_URL']: conn.execute('SELECT pg_advisory_xact_lock(hashtext(?))',(key,))
+            else: conn.execute('BEGIN IMMEDIATE')
             row=conn.execute('SELECT window_started,hits FROM rate_limits WHERE key=?',(key,)).fetchone()
             if row and now-row['window_started']<window:
                 hits=row['hits']+1
@@ -231,7 +238,8 @@ def create_app(test_config=None):
         page=request.args.get('page',1,type=int)
         if not q: return render_template('feed.html',posts=[],more=False,page=1,sort='new',active_tag='',title='Search',query=q)
         pattern='%'+q.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
-        posts,more=render_feed("p.status='published' AND (p.title LIKE ? ESCAPE '\\' OR p.body LIKE ? ESCAPE '\\')",(pattern,pattern),'new',page)
+        operator='ILIKE' if app.config['DATABASE_URL'] else 'LIKE'
+        posts,more=render_feed(f"p.status='published' AND (p.title {operator} ? ESCAPE '\\' OR p.body {operator} ? ESCAPE '\\')",(pattern,pattern),'new',page)
         return render_template('feed.html',posts=posts,more=more,page=page,sort='new',active_tag='',title='Search results',query=q)
 
     @app.route('/topics')
@@ -280,13 +288,13 @@ def create_app(test_config=None):
             else:
                 try:
                     with db() as conn:
-                        cur=conn.execute('INSERT INTO users(username,password_hash) VALUES(?,?)',(username,generate_password_hash(password,method='scrypt')))
-                        conn.execute('INSERT INTO user_onboarding(user_id) VALUES(?)',(cur.lastrowid,))
-                    session.clear(); session['uid']=cur.lastrowid; session['auth_version']=0; session['csrf']=secrets.token_urlsafe(24)
+                        created=conn.execute('INSERT INTO users(username,password_hash) VALUES(?,?) RETURNING id',(username,generate_password_hash(password,method='scrypt'))).fetchone()
+                        conn.execute('INSERT INTO user_onboarding(user_id) VALUES(?)',(created['id'],))
+                    session.clear(); session['uid']=created['id']; session['auth_version']=0; session['csrf']=secrets.token_urlsafe(24)
                     session['tour_pending']=True
                     session.permanent=request.form.get('remember')=='yes'
                     return redirect(url_for('index'))
-                except sqlite3.IntegrityError: flash('That username is unavailable.','error')
+                except (sqlite3.IntegrityError, psycopg.errors.UniqueViolation): flash('That username is unavailable.','error')
         return render_template('auth.html',mode='register')
 
     @app.route('/login',methods=['GET','POST'])
@@ -297,7 +305,7 @@ def create_app(test_config=None):
             password=request.form.get('password','')
             limited('login-ip:'+str(request.remote_addr),20,300)
             limited('login-name:'+username.casefold(),8,300)
-            user=db().execute('SELECT * FROM users WHERE username=?',(username,)).fetchone()
+            user=db().execute('SELECT * FROM users WHERE lower(username)=lower(?)',(username,)).fetchone()
             if user and len(password)<=128 and check_password_hash(user['password_hash'],password):
                 session.clear(); session['uid']=user['id']; session['auth_version']=user['session_version']; session['csrf']=secrets.token_urlsafe(24)
                 session.permanent=request.form.get('remember')=='yes'
@@ -326,6 +334,11 @@ def create_app(test_config=None):
             return name
         except (UnidentifiedImageError,OSError,Image.DecompressionBombError) as exc:
             raise ValueError('The image could not be decoded safely.') from exc
+
+    def save_media(conn, media_id, filename):
+        if app.config['DATABASE_URL']:
+            content=(Path(app.config['UPLOAD_DIR'])/filename).read_bytes()
+            conn.execute('INSERT INTO media_bytes(media_id,content) VALUES(?,?)',(media_id,content))
 
     @app.route('/members/<username>')
     def profile(username):
@@ -382,8 +395,8 @@ def create_app(test_config=None):
                 with db() as conn:
                     avatar_id=g.user['avatar']
                     if name:
-                        cur=conn.execute("INSERT INTO media(user_id,filename,kind,consent) VALUES(?,?,'avatar',1)",(g.user['id'],name))
-                        avatar_id=cur.lastrowid
+                        avatar_id=conn.execute("INSERT INTO media(user_id,filename,kind,consent) VALUES(?,?,'avatar',1) RETURNING id",(g.user['id'],name)).fetchone()['id']
+                        save_media(conn,avatar_id,name)
                     conn.execute('UPDATE users SET bio=?,avatar=? WHERE id=?',(bio,avatar_id,g.user['id']))
             except Exception:
                 if name: (Path(app.config['UPLOAD_DIR'])/name).unlink(missing_ok=True)
@@ -445,8 +458,9 @@ def create_app(test_config=None):
         try: name=image_upload(request.files['avatar'])
         except ValueError as exc: return render_template('settings.html',profile_bio=g.user['bio'] or '',errors={'avatar':str(exc)}),422
         with db() as conn:
-            cur=conn.execute("INSERT INTO media(user_id,filename,kind,consent) VALUES(?,?,'avatar',1)",(g.user['id'],name))
-            conn.execute('UPDATE users SET avatar=? WHERE id=?',(cur.lastrowid,g.user['id']))
+            avatar_id=conn.execute("INSERT INTO media(user_id,filename,kind,consent) VALUES(?,?,'avatar',1) RETURNING id",(g.user['id'],name)).fetchone()['id']
+            save_media(conn,avatar_id,name)
+            conn.execute('UPDATE users SET avatar=? WHERE id=?',(avatar_id,g.user['id']))
         flash('Profile updated.','success'); return redirect(url_for('settings'))
 
     @app.route('/media/<int:media_id>')
@@ -457,8 +471,11 @@ def create_app(test_config=None):
             if not (g.user and (g.user['id']==item['user_id'] or g.user['role'] in ('moderator','admin'))): abort(404)
         if item['kind']=='post' and item['post_status']!='published' and not (g.user and (g.user['id']==item['user_id'] or g.user['role'] in ('moderator','admin'))): abort(404)
         path=Path(app.config['UPLOAD_DIR'])/item['filename']
-        if not path.is_file(): abort(404)
-        return send_file(path,mimetype='image/jpeg',max_age=0)
+        if path.is_file(): return send_file(path,mimetype='image/jpeg',max_age=0)
+        if app.config['DATABASE_URL']:
+            stored=db().execute('SELECT content FROM media_bytes WHERE media_id=?',(media_id,)).fetchone()
+            if stored: return send_file(io.BytesIO(stored['content']),mimetype='image/jpeg',max_age=0)
+        abort(404)
 
     def valid_post(form):
         typ=form.get('type','story'); title=form.get('title','').strip(); body=form.get('body','').strip()
@@ -515,13 +532,13 @@ def create_app(test_config=None):
             try:
                 for file in files: names.append(image_upload(file))
                 with db() as conn:
-                    cur=conn.execute('INSERT INTO posts(author_id,type,title,body) VALUES(?,?,?,?)',(g.user['id'],typ,title,body))
-                    pid=cur.lastrowid
+                    pid=conn.execute('INSERT INTO posts(author_id,type,title,body) VALUES(?,?,?,?) RETURNING id',(g.user['id'],typ,title,body)).fetchone()['id']
                     conn.executemany('INSERT INTO post_tags(post_id,tag_id) VALUES(?,?)',[(pid,x) for x in tag_ids])
                     for i,name in enumerate(names):
                         caption=captions[i].strip()[:300] if i<len(captions) else ''
                         label=labels[i] if i<len(labels) and labels[i] in ('Before','After','Other') else 'Other'
-                        conn.execute("INSERT INTO media(post_id,user_id,filename,kind,label,caption,consent) VALUES(?,?,?,'post',?,?,1)",(pid,g.user['id'],name,label,caption))
+                        media_id=conn.execute("INSERT INTO media(post_id,user_id,filename,kind,label,caption,consent) VALUES(?,?,?,'post',?,?,1) RETURNING id",(pid,g.user['id'],name,label,caption)).fetchone()['id']
+                        save_media(conn,media_id,name)
             except ValueError as exc:
                 for name in names: (Path(app.config['UPLOAD_DIR'])/name).unlink(missing_ok=True)
                 return composer_error(None,{'images':str(exc)})
@@ -688,8 +705,8 @@ def create_app(test_config=None):
             if reason not in ALLOWED_REASONS or len(detail)>1000: flash('Choose a reason and keep details under 1,000 characters.','error')
             else:
                 with db() as conn:
-                    cur=conn.execute('INSERT INTO reports(reporter_id,target_type,target_id,reason,detail) VALUES(?,?,?,?,?)',(g.user['id'],target_type,target_id,reason,detail))
-                flash(f'Report #{cur.lastrowid} received for moderator review.','success')
+                    report_id=conn.execute('INSERT INTO reports(reporter_id,target_type,target_id,reason,detail) VALUES(?,?,?,?,?) RETURNING id',(g.user['id'],target_type,target_id,reason,detail)).fetchone()['id']
+                flash(f'Report #{report_id} received for moderator review.','success')
                 return redirect(url_for('index'))
         return render_template('report.html',target_type=target_type,target_id=target_id,reasons=sorted(ALLOWED_REASONS))
 
@@ -767,10 +784,17 @@ app=create_app()
 
 if __name__=='__main__':
     command=sys.argv[1] if len(sys.argv)>1 else 'run'
-    if command=='init-db': init_db(app.config['DATABASE_PATH']); print('Database initialized:',app.config['DATABASE_PATH'])
-    elif command=='seed-demo': seed_demo(app.config['DATABASE_PATH']); print('Demo content ready.')
-    elif command=='check-db': print('Database integrity:',check_db(app.config['DATABASE_PATH']))
+    if command=='init-db':
+        if app.config['DATABASE_URL']: raise SystemExit('Hosted schema uses supabase/001_forum_schema.sql; it is already applied.')
+        init_db(app.config['DATABASE_PATH']); print('Database initialized:',app.config['DATABASE_PATH'])
+    elif command=='seed-demo': seed_demo(app.config['DATABASE_PATH'],app.config['DATABASE_URL']); print('Demo content ready.')
+    elif command=='check-db':
+        if app.config['DATABASE_URL']:
+            with connect_app(app.config['DATABASE_PATH'],app.config['DATABASE_URL']) as conn:
+                print('Hosted database reachable. Posts:',conn.execute('SELECT count(*) n FROM posts').fetchone()['n'])
+        else: print('Database integrity:',check_db(app.config['DATABASE_PATH']))
     elif command=='backup-db':
+        if app.config['DATABASE_URL']: raise SystemExit('This command only backs up historical SQLite data; configure hosted backups in Supabase.')
         stamp=time.strftime('%Y%m%d-%H%M%S',time.localtime())
         target=ROOT/'instance'/'backups'/f'forum-{stamp}.zip'
         print('Backup created:',backup_data(app.config['DATABASE_PATH'],app.config['UPLOAD_DIR'],target))

@@ -4,6 +4,7 @@ import tempfile
 import zipfile
 from contextlib import closing
 from pathlib import Path
+from datetime import datetime, timezone
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -136,6 +137,48 @@ def connect(path):
     db.execute('PRAGMA busy_timeout=5000')
     return db
 
+class PostgresCursor:
+    def __init__(self, cursor): self.cursor = cursor
+    def _row(self, row):
+        if row is None: return None
+        return {key: value.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                if isinstance(value, datetime) else value for key, value in row.items()}
+    def fetchone(self): return self._row(self.cursor.fetchone())
+    def fetchall(self): return [self._row(row) for row in self.cursor.fetchall()]
+    def __iter__(self):
+        for row in self.cursor: yield self._row(row)
+
+class PostgresConnection:
+    def __init__(self, database_url):
+        import psycopg
+        from psycopg.rows import dict_row
+        self.connection = psycopg.connect(database_url, autocommit=True, row_factory=dict_row,
+                                          connect_timeout=8, sslmode='require',
+                                          options='-c search_path=forum,public')
+        self.transaction = None
+    def execute(self, sql, params=()):
+        sql = sql.replace('?', '%s')
+        if sql.lstrip().upper().startswith('INSERT OR IGNORE '):
+            sql = sql.replace('INSERT OR IGNORE ', 'INSERT ', 1).rstrip() + ' ON CONFLICT DO NOTHING'
+        return PostgresCursor(self.connection.execute(sql, params))
+    def executemany(self, sql, params):
+        sql = sql.replace('?', '%s')
+        if sql.lstrip().upper().startswith('INSERT OR IGNORE '):
+            sql = sql.replace('INSERT OR IGNORE ', 'INSERT ', 1).rstrip() + ' ON CONFLICT DO NOTHING'
+        with self.connection.cursor() as cursor: cursor.executemany(sql, params)
+    def __enter__(self):
+        self.transaction = self.connection.transaction()
+        self.transaction.__enter__()
+        return self
+    def __exit__(self, *args):
+        result = self.transaction.__exit__(*args)
+        self.transaction = None
+        return result
+    def close(self): self.connection.close()
+
+def connect_app(path, database_url=None):
+    return PostgresConnection(database_url) if database_url else connect(path)
+
 def init_db(path):
     with closing(connect(path)) as db:
         version=db.execute('PRAGMA user_version').fetchone()[0]
@@ -180,9 +223,9 @@ def backup_data(path,uploads_dir,destination):
             raise
     return destination
 
-def seed_demo(path):
+def seed_demo(path, database_url=None):
     from werkzeug.security import generate_password_hash
-    with closing(connect(path)) as db:
+    with closing(connect_app(path,database_url)) as db:
         with db:
             db.execute('INSERT OR IGNORE INTO users(username,password_hash,bio) VALUES(?,?,?)',
                        ('demo_member',generate_password_hash(os.urandom(24).hex()),'Demonstration account; no Louw affiliation.'))
@@ -201,7 +244,6 @@ def seed_demo(path):
                     db.execute('UPDATE posts SET type=?,title=?,body=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(typ,title,body,pid))
                     db.execute('DELETE FROM post_tags WHERE post_id=?',(pid,))
                 else:
-                    cur=db.execute('INSERT INTO posts(author_id,type,title,body,is_demo) VALUES(?,?,?,?,1)',(uid,typ,title,body))
-                    pid=cur.lastrowid
+                    pid=db.execute('INSERT INTO posts(author_id,type,title,body,is_demo) VALUES(?,?,?,?,1) RETURNING id',(uid,typ,title,body)).fetchone()['id']
                 tid=db.execute('SELECT id FROM tags WHERE name=?',(tag,)).fetchone()['id']
                 db.execute('INSERT OR IGNORE INTO post_tags(post_id,tag_id) VALUES(?,?)',(pid,tid))

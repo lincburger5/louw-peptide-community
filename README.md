@@ -1,12 +1,12 @@
-# Louw Nutri-Balance community forum — version 1.2 local build
+# Louw Nutri-Balance community forum — local SQLite build
 
 A working, local-only community forum based on the [planning specification](../forum-product-design-specification.md). This is a demonstration, **not an official Louw service**. Company contacts, product and peptide names, testimonials, terms, privacy policy, moderation commitments, and health copy remain unverified. The only brand asset is the logo supplied by the user.
 
-Version 1.2 runs on the laptop and in the installed Android companion shell. The laptop runs Flask and stores accounts, posts, images, and appearance preferences in SQLite. The Android app shows the same responsive forum and keeps no separate database; the phone needs a connection to the laptop while in use. See [handoff.md](handoff.md) for the full implementation and review status.
+The laptop runs Flask and stores accounts, posts, and images locally in SQLite and `instance/uploads/`. The installed Android companion shell shows the same website and needs a connection to the laptop while in use. On 2026-10-23 the hosted data was copied back into SQLite and the Supabase connection file was removed. See [HANDOFF.md](HANDOFF.md) for details.
 
 ## Stack
 
-Flask 3, server-rendered Jinja templates, SQLite, Pillow for safe image normalization, and small vanilla JavaScript enhancements. This keeps the forum simple to run and audit while SQLite provides relational data and transactional writes. The SQLite path is configured with `DATABASE_PATH`; routes use a central connection function in `db.py`, so a hosted database can be introduced through a new adapter and migration without changing the templates. That migration still requires implementation and testing.
+Flask 3, server-rendered Jinja templates, SQLite, Pillow for image normalization, and small vanilla JavaScript enhancements. `DATABASE_URL` is unset for the active local build. Uploaded JPEGs are stored in the private `instance/uploads/` folder and served through authorized Flask routes.
 
 ## Start locally
 
@@ -18,7 +18,7 @@ The Android source is in `android_app/`. Build version `1.1.0+2` with `flutter b
 
 For the connected phone, enable USB debugging and allow this laptop. Run `START-FORUM-PHONE.cmd` instead of `START-FORUM.cmd`; it sets `adb reverse tcp:5000 tcp:5000` and starts Flask. Install with `adb install -r android_app/build/app/outputs/flutter-apk/app-release.apk`. Keep the cable and laptop server connected. If the phone disconnects, reconnect and run `adb reverse tcp:5000 tcp:5000` again. The app's **Laptop connection** setting defaults to `http://127.0.0.1:5000/` for this USB route.
 
-Wi-Fi access is currently disabled because Windows marks this network **Public**. The forum listens only on `127.0.0.1`, and the verified phone route is USB with `adb reverse tcp:5000 tcp:5000`. Enabling Wi-Fi later requires a trusted network and a firewall rule limited to the phone's address before binding a listener to the laptop's private IP. This is plain HTTP for local testing; use HTTPS and production hosting before public or sensitive-data use. The Android app does not work while the laptop server is off.
+For phone use without USB on the current Wi-Fi, the laptop is `192.168.68.112` and the phone is `192.168.68.106`. A Windows Public-profile inbound rule named **Louw Forum Phone WiFi** permits port 5000 only from that phone IP to that laptop IP. Run `START-FORUM-WIFI.ps1` to start the Wi-Fi listener; it checks the rule and addresses first. In the Android app's **Laptop connection** setting, save `http://192.168.68.112:5000/`. The cable can then be unplugged. If either device's Wi-Fi IP changes, update the rule and app address before reconnecting. This is plain HTTP for local testing; use HTTPS and production hosting before public or sensitive-data use. The Android app does not work while the laptop server is off.
 
 The Android package ID is `com.local.louwforum`. Public branding, app identity, distribution signing, and store release require Louw approval.
 
@@ -31,20 +31,20 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python app.py init-db
-python app.py seed-demo
+python app.py check-db
 python app.py run
 ```
 
-Open `http://127.0.0.1:5000`. Signed-out visitors see the sign-in screen. `seed-demo` is optional and idempotent. Its five posts are marked **DEMO**, contain no Louw endorsement or medical outcome, and the demo account has an unusable random password. Register your own account to interact. Data lives under `instance/forum.sqlite3`; normalized uploaded photos live under `instance/uploads/`. Both are ignored by Git. To use another local directory, set `DATABASE_PATH` and `UPLOAD_DIR` before initialization. The local app creates `instance/secret.key` once and reuses it across restarts; keep this private. A `SECRET_KEY` environment variable overrides it and must remain stable if used.
+No `.env` is needed for the local database. Open `http://127.0.0.1:5000`. Signed-out visitors see the sign-in screen. `seed-demo` is optional and idempotent; its posts are marked **DEMO**. The local app creates `instance/secret.key` once and reuses it across restarts; keep this private. A `SECRET_KEY` environment variable overrides it and must remain stable if used.
 
-SQLite uses foreign keys, a five-second busy timeout, WAL journaling, and schema version 4. Version 2 adds the new-member checklist, version 3 stores appearance preferences, and version 4 adds persistent rate limits and session invalidation for password changes. Run `python app.py check-db` to verify integrity. Run `python app.py backup-db` to create a consistent database and upload archive under `instance/backups/`; store copies securely. Database access is centralized in `db.py`, but migration to a hosted database remains future work.
+Run `python app.py check-db` for SQLite integrity and `python app.py backup-db` for a database and image archive. The return from Supabase was prepared and checked before replacing the active SQLite file. The prior local copy and a ZIP backup remain in ignored `instance/`; protect them because they contain member data. The historical migration scripts in `supabase/` are not part of the active runtime.
 
 ## Moderator setup for local review
 
 There is no public role elevation route. After registering a test account, stop the app and run this in the project folder, replacing `your_username`:
 
 ```powershell
-python -c "from app import app; from db import connect; db=connect(app.config['DATABASE_PATH']); db.execute('UPDATE users SET role=? WHERE username=?', ('moderator','your_username')); db.commit(); db.close()"
+python -c "from app import app; from db import connect_app; db=connect_app(app.config['DATABASE_PATH'],app.config['DATABASE_URL']); db.execute('UPDATE users SET role=? WHERE username=?', ('moderator','your_username')); db.close()"
 ```
 
 Restart the app and use **Profile → Moderation**. This command is for local setup only. A production role assignment workflow needs separate authorization and audit review.
@@ -66,7 +66,7 @@ Restart the app and use **Profile → Moderation**. This command is for local se
 
 ## Current limitations and approval gates
 
-This is **not ready for public launch**. Louw needs to approve its legal/trading name, logo use, contacts, service area, support route, age eligibility, policy text, community rules, photo/testimonial consent, retention/deletion process, moderators, official announcement publishers, and whether the proposed named discussion topics may appear publicly. The named topics do not present prices, availability, or product claims. Placeholder policy pages explicitly say they are pending approval. The local app is bound to loopback and uses SQLite-backed rate limiting; public deployment would also need HTTPS hosting, secure backups, email verification/reset, abuse monitoring, notification decisions, data export/deletion flows, media removal workflow, and a hosted database adapter. No site can be guaranteed impossible to hack.
+This is **not ready for public launch**. Louw needs to approve its legal/trading name, logo use, contacts, service area, support route, age eligibility, policy text, community rules, photo/testimonial consent, retention/deletion process, moderators, official announcement publishers, and whether the proposed named discussion topics may appear publicly. The named topics do not present prices, availability, or product claims. Placeholder policy pages explicitly say they are pending approval. The laptop server still uses local HTTP and loopback/USB access; public deployment also needs HTTPS hosting, verified hosted backups, email verification/reset, abuse monitoring, data export/deletion flows, and a media removal workflow. No site can be guaranteed impossible to hack.
 
 Drafts are text-only until publication and the preview does not render uploaded images. Post edits keep existing images; individual image replacement/removal is a pending workflow. Moderation review acts on reports; the slur filter is a narrow publication check and does not replace human review. Do not use the local prototype to collect real health or sensitive personal data.
 

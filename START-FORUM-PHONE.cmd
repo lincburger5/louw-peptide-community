@@ -14,5 +14,9 @@ if errorlevel 1 (
 )
 echo Phone connection is ready. Keep this cable connected.
 echo Starting the forum at http://127.0.0.1:5000/
-python app.py run
+if exist ".venv\Scripts\python.exe" (
+  ".venv\Scripts\python.exe" app.py run
+) else (
+  python app.py run
+)
 pause

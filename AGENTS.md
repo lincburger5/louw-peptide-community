@@ -1,20 +1,26 @@
 # Louw forum project guide
 
+Current deployment: local SQLite in `instance/forum.sqlite3`, uploaded JPEGs in
+`instance/uploads/`, and no `DATABASE_URL` or `.env` connection file. The
+Supabase migration notes below are historical; do not reconnect without a new
+user decision. Back up SQLite and uploads together before changes.
+
 ## Structure
 
 - `app.py`: Flask routes, validation, authentication, authorization, and moderation.
-- `db.py`: SQLite connection, schema, seed and database initialization. Database path comes from `DATABASE_PATH`.
+- `db.py`: SQLite and Postgres adapters, SQLite schema, seed and database initialization. `DATABASE_URL` selects Supabase Postgres; `DATABASE_PATH` selects local SQLite when no URL is set.
+- `supabase/`: versioned private Postgres schema and one-time SQLite/data/image migration script.
 - `templates/`: Jinja pages and reusable layout components.
 - `static/css/`, `static/js/`, `static/brand/`: presentation and approved user-supplied logo.
-- `instance/`: local SQLite database and uploaded images; git-ignored and never served as a directory.
+- `instance/`: historical SQLite backup, local upload cache, and signing key; git-ignored and never served as a directory. Hosted image bytes are in private `forum.media_bytes`.
 - `tests/`: integration tests using temporary databases and upload directories.
 - `android_app/`: native Flutter Android shell for the local forum; Android's picker supplies image uploads. The Flask server remains the source of truth.
 
 ## Setup and run
 
-Use Python 3.11+ and `python -m pip install -r requirements.txt`. Initialize with `python app.py init-db`, optionally `python app.py seed-demo`, and start with `python app.py run`. Local URL: `http://127.0.0.1:5000`. The app creates a private local `instance/secret.key` once; set a stable `SECRET_KEY` environment variable if overriding it. Optional `DATABASE_PATH` and `UPLOAD_DIR` environment variables move local state. The database functions isolate SQLite calls so a hosted adapter can replace them later.
+Use Python 3.11+, a local `.venv`, and `python -m pip install -r requirements.txt`. The ignored `.env` holds the Supabase Session pooler `DATABASE_URL`; copy `.env.example` on another machine and fill it with that machine's private connection URI. Run `python app.py check-db`, then `python app.py run`. Local URL: `http://127.0.0.1:5000`. The app creates a private local `instance/secret.key` once; set a stable `SECRET_KEY` environment variable if overriding it. With no `DATABASE_URL`, run `python app.py init-db` for SQLite-only development.
 
-Database checks: `python app.py check-db` and `python app.py backup-db`. Backups include a SQLite snapshot and uploaded JPEGs. For USB phone testing, `START-FORUM-PHONE.cmd` configures ADB reverse before starting the server. Build the Android shell with `cd android_app` and `flutter build apk --release`. The local APK is development signed; do not distribute it publicly.
+`python app.py check-db` checks the selected database. `backup-db` only backs up historical/local SQLite plus upload cache; configure hosted Supabase backups independently. The pre-migration archive is private in `instance/backups`. For USB phone testing, `START-FORUM-PHONE.cmd` configures ADB reverse before starting the server. Build the Android shell with `cd android_app` and `flutter build apk --release`. The local APK is development signed; do not distribute it publicly.
 
 ## Conventions
 
@@ -22,9 +28,9 @@ Keep routes thin where possible. Validate all user input on the server; template
 
 ## Data and images
 
-Use SQLite with foreign keys and indexes. Keep email and password hashes private. Store uploaded images outside `static`; serve only by media ID through an authorized Flask route. Allow JPEG, PNG, and WebP after Pillow decoding, normalize to JPEG, strip metadata, cap size, and generate random names. Never trust user filenames. Delete obsolete physical files only after database references are removed.
+Use the private `forum` Postgres schema with indexes, foreign keys, and RLS; no `anon` or `authenticated` schema grants. SQLite remains for tests. Keep password hashes private. Store hosted JPEG bytes in `media_bytes` and a local upload cache outside `static`; serve only by media ID through an authorized Flask route. Allow JPEG, PNG, and WebP after Pillow decoding, normalize to JPEG, strip metadata, cap size, and generate random names. Never trust user filenames. Delete obsolete media only after database references are removed.
 
-Keep schema upgrades versioned with `PRAGMA user_version`; version 2 adds new-member onboarding, version 3 adds account appearance preferences, and version 4 adds persistent rate limits and session invalidation. Back up the database before future migrations. Never add the live database, uploaded images, signing keys, or backup archives to source control. The live session cookie is `louw_live_session`; keep it distinct from the preview cookie.
+Keep Postgres schema changes in versioned `supabase/` SQL migrations; SQLite test schema still uses `PRAGMA user_version`. Back up and verify the hosted database before future migrations. Never add `.env`, the live database, uploaded images, signing keys, or backup archives to source control. The live session cookie is `louw_live_session`; keep it distinct from the preview cookie.
 
 ## Moderation
 
@@ -32,7 +38,7 @@ Members can report posts and comments. Moderators may hide/restore posts or comm
 
 ## Security
 
-Use scrypt password hashes, server-side validation, signed HttpOnly/SameSite session cookies, CSRF tokens on every mutation, restricted upload decoding, SQLite-backed rate limits for authentication and posting, trusted Host validation, and security headers. Parameterize all user-supplied SQL values; interpolate only fixed internal query fragments. Require login for forum pages and mutations, and verify owner/moderator status server-side. Remembered sign-ins last 30 days only when chosen; ordinary sign-ins use browser-session cookies. Password changes must invalidate older sessions. Keep the local signing key private and use a stable secret on deployment. No production deployment with placeholder legal text or contact details. Do not expose local data files or email addresses in public pages.
+Use scrypt password hashes, server-side validation, signed HttpOnly/SameSite session cookies, CSRF tokens on every mutation, restricted upload decoding, database-backed rate limits for authentication and posting, trusted Host validation, and security headers. Parameterize all user-supplied SQL values; interpolate only fixed internal query fragments. Require login for forum pages and mutations, and verify owner/moderator status server-side. Remembered sign-ins last 30 days only when chosen; ordinary sign-ins use browser-session cookies. Password changes must invalidate older sessions. Keep `.env` and the local signing key private. No production deployment with placeholder legal text or contact details. Do not expose local data files or email addresses in public pages.
 
 ## Verification
 
